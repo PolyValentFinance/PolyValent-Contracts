@@ -1,14 +1,23 @@
+//Socials
+
+
+
+
 // SPDX-License-Identifier: MIT
+
+
+
+
 
 pragma solidity ^0.8.0;
 
 
 import '@openzeppelin/contracts/security/ReentrancyGuard.sol';
-import "./interfaces/SafeBEP20.sol";
-import "./Electron.sol";
+import './interfaces/SafeBEP20.sol';
+import './Electron.sol';
 
 
-// MasterAtom is the master of Electron. He can make Electron and he is a fair guy.
+// MasterAtom is the master of Electron. He can make Electron and he is a fair Atom.
 //
 // Note that it's ownable and the owner wields tremendous power. The ownership
 // will be transferred to a governance smart contract once Electron is sufficiently
@@ -44,6 +53,12 @@ contract MasterAtom is Ownable, ReentrancyGuard {
         uint16 depositFeeBP;        // Deposit fee in basis points
     }
 
+    struct FeeInfo{
+        address feeAddress;
+        uint16 feeAddressShare; //(0-100)  in Basis points. the sum of all in array must sum 100.
+    }
+    FeeInfo[] public feeArray;
+
     // The Electron TOKEN!
     Electron public _electron;
     // Dev address.
@@ -52,6 +67,8 @@ contract MasterAtom is Ownable, ReentrancyGuard {
     address public _feeAddress;
     // Electron tokens created per block.
     uint256 public _electronPerBlock;
+
+    
     
 
     // Info of each pool.
@@ -66,7 +83,7 @@ contract MasterAtom is Ownable, ReentrancyGuard {
     uint256 public _startBlock;
 
     modifier nonDuplicated(IBEP20 lpToken_) {
-        require(!_poolExistence[lpToken_], "nonDuplicated: duplicated");
+        require(!_poolExistence[lpToken_], 'MasterAtom: nonDuplicated: duplicated token');
         _;
     }
 
@@ -87,10 +104,15 @@ contract MasterAtom is Ownable, ReentrancyGuard {
         _electron = electron_;
         _devAddress = devAddress_;
         _feeAddress = feeAddress_;
+        feeArray.push(
+            FeeInfo({  
+                feeAddress:feeAddress_,
+                feeAddressShare:100
+        }));
         //_electronPerBlock = electronPerBlock_;
-        _electronPerBlock = (5 * (10**_electron.decimals())) / 100; // 0.05 electrones per block
+        _electronPerBlock = ((5 * (10**_electron.decimals())) / 100); // 0.05 electrons per block
         //_startBlock = startBlock_;
-        _startBlock = block.number + 43200*2; // start block 2 days after deploy, initial date.. might change
+        _startBlock = block.number + 43200; // start block 1 days after deploy, initial date.. might change
     }
 
     function poolLength() external view returns (uint256) {
@@ -102,7 +124,7 @@ contract MasterAtom is Ownable, ReentrancyGuard {
 
     // Add a new lp to the pool. Can only be called by the owner.
     function add(uint256 allocPoint_, IBEP20 lpToken_, uint16 depositFeeBP_, bool withUpdate_) public onlyOwner nonDuplicated(lpToken_) {
-        require(depositFeeBP_ <= 400, "add: invalid deposit fee basis points");
+        require(depositFeeBP_ <= 400, 'MasterAtom: Add: Invalid deposit fee basis points, must be [0-400]'); //deposit Fee capped at 400 -> 4%
         if (withUpdate_) {
             massUpdatePools();
         }
@@ -121,11 +143,11 @@ contract MasterAtom is Ownable, ReentrancyGuard {
 
     // Update the given pool's Electron allocation point and deposit fee. Can only be called by the owner.
     function set(uint256 pid_, uint256 allocPoint_, uint16 depositFeeBP_, bool withUpdate_) public onlyOwner {
-        require(depositFeeBP_ <= 400, "set: invalid deposit fee basis points");
+        require(depositFeeBP_ <= 400, 'MasterAtom: Set: Invalid deposit fee basis points, must be [0-400]'); //deposit Fee capped at 400 -> 4%
         if (withUpdate_) {
             massUpdatePools();
         }
-        _totalAllocPoint += allocPoint_-_poolInfo[pid_].allocPoint;
+        _totalAllocPoint = ((_totalAllocPoint + allocPoint_)- _poolInfo[pid_].allocPoint);
         _poolInfo[pid_].allocPoint = allocPoint_;
         _poolInfo[pid_].depositFeeBP = depositFeeBP_;
     }
@@ -143,10 +165,10 @@ contract MasterAtom is Ownable, ReentrancyGuard {
         uint256 lpSupply = pool.lpToken.balanceOf(address(this));
         if (block.number > pool.lastRewardBlock && lpSupply != 0) {
             uint256 multiplier = getMultiplier(pool.lastRewardBlock, block.number);
-            uint256 electronReward = (multiplier*_electronPerBlock*pool.allocPoint)/_totalAllocPoint;
-            accElectronPerShare += (electronReward* 1e12)/lpSupply;
+            uint256 electronReward = ((multiplier*_electronPerBlock*pool.allocPoint)/_totalAllocPoint);
+            accElectronPerShare += ((electronReward* 1e12)/lpSupply);
         }
-        return ((user.amount*accElectronPerShare)/ 1e12) - user.rewardDebt;
+        return (((user.amount*accElectronPerShare)/ 1e12) - user.rewardDebt);
     }
 
     // Update reward variables for all pools. Be careful of gas spending!
@@ -168,7 +190,7 @@ contract MasterAtom is Ownable, ReentrancyGuard {
             return;
         }
         uint256 multiplier = getMultiplier(pool.lastRewardBlock, block.number);
-        uint256 electronReward = (multiplier*_electronPerBlock*pool.allocPoint)/_totalAllocPoint;
+        uint256 electronReward = ((multiplier*_electronPerBlock*pool.allocPoint)/_totalAllocPoint);
         _electron.mint(_devAddress, electronReward/10);
         _electron.mint(address(this), electronReward);
         pool.accElectronPerShare += ((electronReward*1e12)/lpSupply);
@@ -181,7 +203,7 @@ contract MasterAtom is Ownable, ReentrancyGuard {
         UserInfo storage user = _userInfo[pid_][_msgSender()];
         updatePool(pid_);
         if (user.amount > 0) {
-            uint256 pending = ((user.amount*pool.accElectronPerShare)/1e12) - user.rewardDebt;
+            uint256 pending = (((user.amount*pool.accElectronPerShare)/1e12) - user.rewardDebt);
             if (pending > 0) {
                 safeElectronTransfer(_msgSender(), pending);
             }
@@ -189,24 +211,53 @@ contract MasterAtom is Ownable, ReentrancyGuard {
         if (amount_ > 0) {
             pool.lpToken.safeTransferFrom(_msgSender(), address(this), amount_);
             if (pool.depositFeeBP > 0) {
-                uint256 depositFee = amount_*pool.depositFeeBP/10000;
-                pool.lpToken.safeTransfer(_feeAddress, depositFee);
-                user.amount += amount_ - depositFee;
+                uint256 depositFee = ((amount_*pool.depositFeeBP)/10000);
+                distributeFee(pool.lpToken, depositFee);
+                //pool.lpToken.safeTransfer(_feeAddress, depositFee);
+                user.amount = (user.amount + amount_) - depositFee;
             } else {
                 user.amount += amount_;
             }
         }
-        user.rewardDebt = (user.amount*pool.accElectronPerShare)/1e12;
+        user.rewardDebt = ((user.amount*pool.accElectronPerShare)/1e12);
         emit Deposit(_msgSender(), pid_, amount_);
     }
+
+
+    function distributeFee(IBEP20 lpToken, uint256 amount_) internal {
+        uint256 acumulated;
+        for (uint256 i = 1; i<feeArray.length;++i){
+            uint256 fraction = ((amount_*feeArray[i].feeAddressShare)/100);
+            lpToken.safeTransfer(feeArray[i].feeAddress, fraction);
+            acumulated+=fraction;
+        }
+        lpToken.safeTransfer(feeArray[0].feeAddress, amount_-acumulated);
+    }
+
+    function setFeeAddressArray(FeeInfo[] calldata fiarray_) public{
+        require(_msgSender() == _feeAddress, 'MasterAtom: setFeeAddressArray: Only feeAddress can set');
+        uint16 count;
+        delete feeArray;
+        for (uint256 i = 0; i<fiarray_.length;++i){
+            count+= fiarray_[i].feeAddressShare;
+            feeArray.push(FeeInfo({
+                feeAddress:fiarray_[i].feeAddress,
+                feeAddressShare:fiarray_[i].feeAddressShare
+            }));
+        }
+        require(count==100,'MasterAtom: setFeeAddressArray: sum of shares must be 100');
+        //feeArray = fiarray_;
+    }
+
+
 
     // Withdraw LP tokens from MasterAtom.
     function withdraw(uint256 pid_, uint256 amount_) public nonReentrant {
         PoolInfo storage pool = _poolInfo[pid_];
         UserInfo storage user = _userInfo[pid_][_msgSender()];
-        require(user.amount >= amount_, "withdraw: not good");
+        require(user.amount >= amount_, 'MasterAtom: Withdraw: not enough to withdraw');
         updatePool(pid_);
-        uint256 pending = ((user.amount*pool.accElectronPerShare)/1e12) - user.rewardDebt;
+        uint256 pending = (((user.amount*pool.accElectronPerShare)/1e12) - user.rewardDebt);
         if (pending > 0) {
             safeElectronTransfer(_msgSender(), pending);
         }
@@ -214,7 +265,7 @@ contract MasterAtom is Ownable, ReentrancyGuard {
             user.amount -= amount_;
             pool.lpToken.safeTransfer(_msgSender(), amount_);
         }
-        user.rewardDebt = (user.amount*pool.accElectronPerShare)/1e12;
+        user.rewardDebt = ((user.amount*pool.accElectronPerShare)/1e12);
         emit Withdraw(_msgSender(), pid_, amount_);
     }
 
@@ -233,38 +284,47 @@ contract MasterAtom is Ownable, ReentrancyGuard {
     function safeElectronTransfer(address to_, uint256 amount_) internal {
         uint256 electronBal = _electron.balanceOf(address(this));
         bool transferSuccess = amount_ > electronBal? _electron.transfer(to_, electronBal): _electron.transfer(to_, amount_);
-        require(transferSuccess, "safeElectronTransfer: transfer failed");
+        require(transferSuccess, 'MasterAtom: safeElectronTransfer: transfer failed');
     }
 
     // Update dev address by the previous dev.
     function setDevAddress(address devAddress_) public {
-        require(_msgSender() == _devAddress, "setDevAddress: FORBIDDEN");
+        require(_msgSender() == _devAddress, 'MasterAtom: setDevAddress: Only dev can set');
         _devAddress = devAddress_;
         emit SetDevAddress(_msgSender(), devAddress_);
     }
 
     function setFeeAddress(address feeAddress_) public {
-        require(_msgSender() == _feeAddress, "setFeeAddress: FORBIDDEN");
+        require(_msgSender() == _feeAddress, 'MasterAtom: setFeeAddress: Only feeAddress can set');
         _feeAddress = feeAddress_;
         emit SetFeeAddress(_msgSender(), feeAddress_);
     }
 
-    //Pancake has to add hidden dummy pools inorder to alter the emission, here we make it simple and transparent to all.
+    // Pancake has to add hidden dummy pools inorder to alter the emission, here we make it simple and transparent to all.
     function updateEmissionRate(uint256 electronPerBlock_) public onlyOwner {
+        require (electronPerBlock_<=10**_electron.decimals(),'MasterAtom: updateEmissionRate: Max emission 1 electron per block');
         massUpdatePools();
         _electronPerBlock = electronPerBlock_;
         emit UpdateEmissionRate(_msgSender(), electronPerBlock_);
     }
 
     // Only update before start of farm
-    function updateStartBlock(uint256 startBlock_) external onlyOwner {
-	    require(startBlock_ > block.number, "Farm already started");
+    function updateStartBlock(uint256 startBlock_) public onlyOwner {
+	    require(startBlock_ > block.number, 'MasterAtom: updateStartBlock: No timetravel allowed!');
         _startBlock = startBlock_;
     }
 
-    //retrieve to the fee address any token that could have been sent to electron contract by mistake. recieved on fee address it will be used for dividends. 
+    // Retrieve to the fee address any token that could have been sent to electron contract by mistake. recieved on fee address it will be used for dividends. 
     function retrieveErrorTokensOnElectronAddress(IBEP20 token_) public onlyOwner{
         _electron.retrieveErrorTokens(token_, _feeAddress);
+    }
+
+    function setMaxTxPercentage(uint16 newPercentage)public onlyOwner{
+        _electron.setMaxTxPercentage(newPercentage);
+    }
+
+    function setExcludeMaxTransactionAddress(address exclude, bool state) public onlyOwner{
+        _electron.setExcludeMaxTransactionAddress(exclude, state);
     }
 
 }
